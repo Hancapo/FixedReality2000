@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Override with: dotnet build -p:GameDir="D:\Games\Broken Reality 2000" -->
+    <GameDir Condition="'$(GameDir)' == '' and '$(BROKEN_REALITY_2000_DIR)' != ''">$(BROKEN_REALITY_2000_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Broken Reality 2000</GameDir>
+    <ManagedDir>$(GameDir)\Broken Reality 2000_Data\Managed</ManagedDir>
+    <BepInExCoreDir>$(GameDir)\BepInEx\core</BepInExCoreDir>
+    <PluginDir>$(GameDir)\BepInEx\plugins\FixedReality2000</PluginDir>
+  </PropertyGroup>
+</Project>
+

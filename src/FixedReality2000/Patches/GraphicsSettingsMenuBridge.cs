@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using com.DMT.BrokenReality2000;
@@ -8,39 +7,6 @@ using UnityEngine;
 using UnityEngine.UI;
 
 namespace FixedReality2000.Patches;
-
-[HarmonyPatch(typeof(OptionsMenu), "Start")]
-internal static class OptionsMenuStartPatch
-{
-    [HarmonyPostfix]
-    private static void BuildCorrectVideoOptions(OptionsMenu __instance)
-    {
-        GraphicsSettingsMenuBridge.Attach(__instance);
-    }
-}
-
-[HarmonyPatch(typeof(OptionsMenu), "OnEnable")]
-internal static class OptionsMenuEnablePatch
-{
-    [HarmonyPostfix]
-    private static void RefreshCorrectVideoOptions(OptionsMenu __instance)
-    {
-        __instance.GetComponent<GraphicsSettingsMenuBridge>()?.RefreshFromSavedValues();
-    }
-}
-
-[HarmonyPatch(typeof(BrokenPlayer), "ZoomOut")]
-internal static class BrokenPlayerBaseFovPatch
-{
-    [HarmonyPrefix]
-    private static void UseConfiguredBaseFov(ref float targetFOV)
-    {
-        if (Mathf.Approximately(targetFOV, 60f))
-        {
-            targetFOV = GraphicsSettingsMenuBridge.SavedFov;
-        }
-    }
-}
 
 internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
 {
@@ -64,7 +30,7 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         GameConfigField =
             AccessTools.FieldRefAccess<OptionsMenu, GameConfig>("gameConfig");
 
-    private readonly List<ResolutionChoice> _resolutionChoices = new();
+    private readonly List<DisplayResolutionChoice> _resolutionChoices = new();
     private readonly List<int> _refreshRates = new();
 
     private OptionsMenu? _menu;
@@ -164,29 +130,33 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         var modesBySize = new Dictionary<(int Width, int Height), HashSet<int>>();
         foreach (Resolution mode in Screen.resolutions)
         {
-            AddMode(modesBySize, mode.width, mode.height, GetRefreshRate(mode));
+            DisplayResolutionUtility.AddMode(
+                modesBySize,
+                mode.width,
+                mode.height,
+                DisplayResolutionUtility.GetRefreshRate(mode));
         }
 
         Resolution current = Screen.currentResolution;
-        AddMode(
+        DisplayResolutionUtility.AddMode(
             modesBySize,
             current.width,
             current.height,
-            GetRefreshRate(current));
-        AddMode(
+            DisplayResolutionUtility.GetRefreshRate(current));
+        DisplayResolutionUtility.AddMode(
             modesBySize,
             Screen.width,
             Screen.height,
-            GetRefreshRate(current));
+            DisplayResolutionUtility.GetRefreshRate(current));
 
         Display display = Display.main;
         if (display != null)
         {
-            AddMode(
+            DisplayResolutionUtility.AddMode(
                 modesBySize,
                 display.systemWidth,
                 display.systemHeight,
-                GetRefreshRate(current));
+                DisplayResolutionUtility.GetRefreshRate(current));
 
         }
 
@@ -194,21 +164,14 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         foreach (var pair in modesBySize)
         {
             _resolutionChoices.Add(
-                new ResolutionChoice(
+                new DisplayResolutionChoice(
                     pair.Key.Width,
                     pair.Key.Height,
                     pair.Value.OrderByDescending(rate => rate).ToArray()));
         }
 
-        _resolutionChoices.Sort((left, right) =>
-        {
-            long leftPixels = (long)left.Width * left.Height;
-            long rightPixels = (long)right.Width * right.Height;
-            int pixels = rightPixels.CompareTo(leftPixels);
-            return pixels != 0
-                ? pixels
-                : right.Width.CompareTo(left.Width);
-        });
+        _resolutionChoices.Sort(
+            DisplayResolutionUtility.CompareBySizeDescending);
     }
 
     private void PopulateResolutionDropdown()
@@ -262,7 +225,7 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         _updatingControls = false;
     }
 
-    private void PopulateRefreshRates(ResolutionChoice choice)
+    private void PopulateRefreshRates(DisplayResolutionChoice choice)
     {
         if (_refreshRateDropdown == null)
         {
@@ -273,7 +236,9 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         _refreshRates.AddRange(choice.RefreshRates.Where(rate => rate > 0));
         if (_refreshRates.Count == 0)
         {
-            _refreshRates.Add(GetRefreshRate(Screen.currentResolution));
+            _refreshRates.Add(
+                DisplayResolutionUtility.GetRefreshRate(
+                    Screen.currentResolution));
         }
 
         _refreshRateDropdown.ClearOptions();
@@ -282,7 +247,8 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
 
         int savedRate = PlayerPrefs.GetInt(
             "refreshRate",
-            _gameConfig?.RefreshRate ?? GetRefreshRate(Screen.currentResolution));
+            _gameConfig?.RefreshRate ??
+            DisplayResolutionUtility.GetRefreshRate(Screen.currentResolution));
         int rateIndex = _refreshRates.IndexOf(savedRate);
         if (rateIndex < 0)
         {
@@ -342,7 +308,7 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
             return;
         }
 
-        ResolutionChoice choice = _resolutionChoices[index];
+        DisplayResolutionChoice choice = _resolutionChoices[index];
         _updatingControls = true;
         PopulateRefreshRates(choice);
         _updatingControls = false;
@@ -401,7 +367,8 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
             return;
         }
 
-        ResolutionChoice choice = _resolutionChoices[_resolutionDropdown.value];
+        DisplayResolutionChoice choice =
+            _resolutionChoices[_resolutionDropdown.value];
         int modeIndex = _displayModeDropdown != null
             ? Mathf.Clamp(_displayModeDropdown.value, 0, 2)
             : Mathf.Clamp(PlayerPrefs.GetInt("resmode", 0), 0, 2);
@@ -421,7 +388,8 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
                 : 0;
         if (refreshRate <= 0)
         {
-            refreshRate = GetRefreshRate(Screen.currentResolution);
+            refreshRate =
+                DisplayResolutionUtility.GetRefreshRate(Screen.currentResolution);
         }
 
         PlayerPrefs.SetInt("resmode", modeIndex);
@@ -456,52 +424,4 @@ internal sealed class GraphicsSettingsMenuBridge : MonoBehaviour
         }
     }
 
-    private static void AddMode(
-        IDictionary<(int Width, int Height), HashSet<int>> modes,
-        int width,
-        int height,
-        int refreshRate)
-    {
-        if (width < 640 || height < 480)
-        {
-            return;
-        }
-
-        var key = (width, height);
-        if (!modes.TryGetValue(key, out HashSet<int>? rates))
-        {
-            rates = new HashSet<int>();
-            modes.Add(key, rates);
-        }
-
-        if (refreshRate > 0)
-        {
-            rates.Add(refreshRate);
-        }
-    }
-
-    private static int GetRefreshRate(Resolution resolution)
-    {
-        return Mathf.Max(1, Mathf.RoundToInt((float)resolution.refreshRateRatio.value));
-    }
-
-    private sealed class ResolutionChoice
-    {
-        internal ResolutionChoice(
-            int width,
-            int height,
-            int[] refreshRates)
-        {
-            Width = width;
-            Height = height;
-            RefreshRates = refreshRates;
-        }
-
-        internal int Width { get; }
-
-        internal int Height { get; }
-
-        internal int[] RefreshRates { get; }
-
-    }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.IO;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -21,8 +22,6 @@ public sealed partial class Plugin : BaseUnityPlugin
     internal static ManualLogSource Log { get; private set; } = null!;
     internal static ConfigEntry<KeyboardShortcut> ReloadConfigHotkey { get; private set; } = null!;
     internal static ConfigEntry<bool> ShowReloadNotification { get; private set; } = null!;
-    internal static ConfigEntry<KeyboardShortcut> ToggleSecondaryCameraHotkey { get; private set; } = null!;
-    internal static ConfigEntry<bool> DisableUnusedStoreCamera { get; private set; } = null!;
     internal static ConfigEntry<bool> EnableRenderBatchingOptimizations { get; private set; } = null!;
     internal static ConfigEntry<bool> OptimizePerFrameLookups { get; private set; } = null!;
     internal static ConfigEntry<bool> FixLowQualityFpsCap { get; private set; } = null!;
@@ -41,7 +40,6 @@ public sealed partial class Plugin : BaseUnityPlugin
     private string? _notificationMessage;
     private float _notificationExpiresAt;
     private GUIStyle? _notificationStyle;
-    private StoreCameraOptimization? _storeCameraOptimization;
     private PlayerMotionEffects? _playerMotionEffects;
     private ViewmodelFovCompensation? _viewmodelFovCompensation;
     private UltrawideSupport? _ultrawideSupport;
@@ -78,18 +76,6 @@ public sealed partial class Plugin : BaseUnityPlugin
             "ShowReloadNotification",
             true,
             "Shows an on-screen confirmation after attempting to reload the configuration.");
-
-        ToggleSecondaryCameraHotkey = Config.Bind(
-            "Performance",
-            "ToggleSecondaryCameraHotkey",
-            new KeyboardShortcut(KeyCode.F8),
-            "Restores or disables the store camera for the current scene.");
-
-        DisableUnusedStoreCamera = Config.Bind(
-            "Performance",
-            "DisableUnusedStoreCamera",
-            true,
-            "Disables player_storecamera until its gameplay mechanic is needed. Press the camera hotkey to restore it for the current scene.");
 
         EnableRenderBatchingOptimizations = Config.Bind(
             "Performance",
@@ -145,12 +131,13 @@ public sealed partial class Plugin : BaseUnityPlugin
                 "Head-bob cycle speed while walking. Sprinting is slightly faster.",
                 new AcceptableValueRange<float>(1f, 20f)));
 
+        RemoveObsoleteConfigurationEntries();
+
         PlayerKeybindings.Initialize();
         ControllerSettings.Initialize();
 
         _harmony = new Harmony(PluginGuid);
         _harmony.PatchAll();
-        _storeCameraOptimization = new StoreCameraOptimization();
         _playerMotionEffects = new PlayerMotionEffects();
         _viewmodelFovCompensation = new ViewmodelFovCompensation();
         _ultrawideSupport = new UltrawideSupport();
@@ -172,7 +159,6 @@ public sealed partial class Plugin : BaseUnityPlugin
         TextureFiltering.RestoreOriginalAnisotropicFiltering();
         GraphicsQualityLighting.RestoreOriginalShadowDarkness();
         RenderBatchingOptimizations.RestoreOriginalSettings();
-        _storeCameraOptimization?.Dispose();
         _playerMotionEffects?.Dispose();
         _viewmodelFovCompensation?.Dispose();
         _ultrawideSupport?.Dispose();
@@ -195,12 +181,6 @@ public sealed partial class Plugin : BaseUnityPlugin
             ReloadConfiguration();
         }
 
-        if (ToggleSecondaryCameraHotkey.Value.IsDown())
-        {
-            string result = _storeCameraOptimization?.Toggle()
-                ?? "Store camera optimization is not initialized";
-            ShowNotification(result);
-        }
     }
 
     private void LateUpdate()
@@ -231,7 +211,6 @@ public sealed partial class Plugin : BaseUnityPlugin
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        _storeCameraOptimization?.OnSceneLoaded();
         _playerMotionEffects?.OnSceneLoaded();
         _viewmodelFovCompensation?.OnSceneLoaded();
         _ultrawideSupport?.OnSceneLoaded();
@@ -278,7 +257,6 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         ApplyConfiguredPostProcessAa();
 
-        Instance?._storeCameraOptimization?.ApplyConfiguration();
     }
 
     internal static bool IsDmtSplashActive()
@@ -345,7 +323,6 @@ public sealed partial class Plugin : BaseUnityPlugin
             }
 
             SceneObjectCache.Clear();
-            _storeCameraOptimization?.ReloadConfiguration();
             _playerMotionEffects?.ApplyConfiguration();
 
             if (FixLowQualityFpsCap.Value)
@@ -377,5 +354,50 @@ public sealed partial class Plugin : BaseUnityPlugin
 
         _notificationMessage = message;
         _notificationExpiresAt = Time.realtimeSinceStartup + 2.5f;
+    }
+
+    private void RemoveObsoleteConfigurationEntries()
+    {
+        const string hotkeyName = "ToggleSecondaryCameraHotkey";
+        const string toggleName = "DisableUnusedStoreCamera";
+        bool saveOnConfigSet = Config.SaveOnConfigSet;
+        try
+        {
+            if (!File.Exists(Config.ConfigFilePath))
+            {
+                return;
+            }
+
+            string contents = File.ReadAllText(Config.ConfigFilePath);
+            if (!contents.Contains(hotkeyName, StringComparison.Ordinal) &&
+                !contents.Contains(toggleName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            Config.SaveOnConfigSet = false;
+            Config.Bind(
+                "Performance",
+                hotkeyName,
+                new KeyboardShortcut(KeyCode.F8),
+                "Obsolete setting pending removal.");
+            Config.Bind(
+                "Performance",
+                toggleName,
+                false,
+                "Obsolete setting pending removal.");
+            Config.Remove(new ConfigDefinition("Performance", hotkeyName));
+            Config.Remove(new ConfigDefinition("Performance", toggleName));
+            Config.Save();
+            Log.LogInfo("Removed obsolete store-camera settings from the configuration file.");
+        }
+        catch (Exception exception)
+        {
+            Log.LogWarning($"Could not remove obsolete store-camera settings: {exception.Message}");
+        }
+        finally
+        {
+            Config.SaveOnConfigSet = saveOnConfigSet;
+        }
     }
 }

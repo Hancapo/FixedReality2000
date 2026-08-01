@@ -2,6 +2,14 @@
 
 All notable changes to Fixed Reality 2000 are documented in this file.
 
+## [Unreleased]
+
+### Removed
+
+- Removed the `player_storecamera` optimization and its F8 toggle. The mod no
+  longer disables or removes the secondary camera from the URP camera stack.
+  Obsolete configuration entries are deleted automatically.
+
 ## [0.2.0] - 2026-07-29
 
 ### Added
